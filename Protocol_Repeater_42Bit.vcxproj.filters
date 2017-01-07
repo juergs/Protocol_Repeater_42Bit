@@ -16,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Protocol_Repeater_42Bit.ino" />
+    <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="__vm\.Protocol_Repeater_42Bit.vsarduino.h">
