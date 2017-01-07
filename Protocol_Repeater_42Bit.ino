@@ -122,7 +122,8 @@ const unsigned long		bit1_MAX = 4700;
 const unsigned long		bit0_MIN = 2330;
 const unsigned long		bit0_MAX = 2730;
 const unsigned long		glitch_Length = 300;                  // Anything below this value is a glitch and will be ignored.
-//--- Interrupt variables
+
+															  //--- Interrupt variables
 unsigned long			fall_Time = 0;                              // Placeholder for microsecond time when last falling edge occured.
 unsigned long			rise_Time = 0;                              // Placeholder for microsecond time when last rising edge occured.
 byte					bit_Count = 0;                                       // Bit counter for received bits.
@@ -130,12 +131,12 @@ unsigned long			build_Buffer[] = { 0, 0 };                    // Placeholder las
 volatile unsigned long	read_Buffer[]  = { 0, 0 };            // Placeholder last full data packet read.
 volatile byte			isrFlags = 0;                               // Various flag bits
 volatile boolean		isInReadMode = false; 
-volatile boolean		hasAutoStarted = false;
+volatile boolean		hasAutoStarted = false;			// over
 
-FILE					serial_stdout;
-SerialCommand			sCmd;     // The demo SerialCommand object
+FILE					serial_stdout;					// needed for printf 
+SerialCommand			sCmd;							// The demo SerialCommand object
 
-unsigned long			wait_time = 0;
+unsigned long			wait_time = 0;					// wait for autostart
 
 //------------------------------------------------------------------
 
@@ -222,10 +223,8 @@ void loop433()
 
 		printf("Data: ");
 		printBits(sizeof(tmp), &tmp);
+
 		//printf("Data: %x - %x - %x - %x\t", buf[0], buf[1],buf[2],buf[3]);
-
-
-
 		//printf("DataA: %lu  DataB:  %lu \t", myData0, data);
 		//printf("Data_1: %lu HEX: 0x%lu \t", myData1, myData1);
 	
