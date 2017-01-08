@@ -5,8 +5,8 @@ Dekodieren Temperatur Feuchte T/H sensor von PEARL NC7427(NC7415) 433MHz
 *   Unknown 433Mhz weather sensor decoder with 42 Bit protocol length
 *   (without two Start-Sync-Patterns with 8 ms duration and 13 times initial "wakeup" sequence).
 *   http://arduino.cc/forum/index.php/topic,142871.msg1106336.html#msg1106336
-	Protocol:
-	https://docs.google.com/document/d/121ZH3omAZsdhFi3GSB-YdnasMjIQSGIcaS7QW6KsACA/mobilebasic?pli=1
+    Protocol:
+    https://docs.google.com/document/d/121ZH3omAZsdhFi3GSB-YdnasMjIQSGIcaS7QW6KsACA/mobilebasic?pli=1
 *   Rising edge
 __           ___       ___    ___
   |         |  |      |  |   |  |
@@ -93,13 +93,13 @@ It has to be something with channel value, as you can see in these readings:
    0    3    0     3    1     1    8    4    8    0 ??
 
 
-	Checksumme
-	Humidity
-	Temperature
-	Channel
-	Tendency (Batteriewechsel?)
-	SensorID
-	Start-Indicators
+    Checksumme
+    Humidity
+    Temperature
+    Channel
+    Tendency (Batteriewechsel?)
+    SensorID
+    Start-Indicators
 
 ***********************************************************************************************************************************
 ***********************************************************************************************************************************
@@ -113,46 +113,47 @@ It has to be something with channel value, as you can see in these readings:
 
 typedef struct
 {
-	//					lead;		//  2 bit default: 00 
-	byte			id;			//  8 bit 
-	byte			bat;		//  2 bit   [00 = low, 01 =2/3, 10 = best]
-	byte			chan;		//  2 bit	[00 = 1, 01= 2, 10 = 3]
-	unsigned int	temp;		// 12 bit	[3 digits in Fahrenheit with 900 Offset i.e. 78.3F, 1100.0101.0110 = 728 = 728 + 900 ]
-	byte	        hum;		//  8 bit   [swap nibbles: 1000.0010 = 40 = 0010.1000]
-	byte			checksum;   //  8 bit
-	byte			lacrosseID; // 
+    //				lead;		//  2 bit default: 00 
+    byte			id;			//  8 bit 
+    byte			bat;		//  2 bit   [00 = low, 01 =2/3, 10 = best]
+    byte			chan;		//  2 bit	[00 = 1, 01= 2, 10 = 3]
+    unsigned int	tempF;		// 12 bit	[3 digits in Fahrenheit with 900 Offset i.e. 78.3F, 1100.0101.0110 = 728 = 728 + 900 ]
+    unsigned int	tempC;		// 12 bit	converted to Celsius 
+    byte	        hum;		//  8 bit   [swap nibbles: 1000.0010 = 40 = 0010.1000]
+    byte			checksum;   //  8 bit
+    byte			lacrosseID; // 
 } NC7427_PROTOCOL;
 
 
 /*
 Usage:
 Wenn nun zwei Variablen vom Typ Address definiert werden,
-	PROTOCOL Kunde;
-	ADDRESS  Lieferant = { "Fischer", "Peter", 2723499, 83342 };
+    PROTOCOL Kunde;
+    ADDRESS  Lieferant = { "Fischer", "Peter", 2723499, 83342 };
 dann kann der gesamte Inhalt von Lieferant durch
-	Kunde = Lieferant;
+    Kunde = Lieferant;
 an Kunde zugewiesen werden.Der Aufruf mit Punkt-Operator
-	printf("%s %s\n", Kunde.szVorname, Kunde.szName);
+    printf("%s %s\n", Kunde.szVorname, Kunde.szName);
 
 Union:
 
-	You could typedef the Union in a common header file:
-	typedef union
-	{
-	uint8_t Bytes[4];
-	uint32_t Word;
-	}BYTES_TO_WORD;
+    You could typedef the Union in a common header file:
+    typedef union
+    {
+    uint8_t Bytes[4];
+    uint32_t Word;
+    }BYTES_TO_WORD;
 
-	extern BYTES_TO_WORD MyBytes;
+    extern BYTES_TO_WORD MyBytes;
 
-	//In the 'C' File with the declairation in it
+    //In the 'C' File with the declairation in it
 
-	#include "commonheaderfile.h"
-	BYTES_TO_WORD MyBytes;
+    #include "commonheaderfile.h"
+    BYTES_TO_WORD MyBytes;
 
-	//in other 'C' files
-	#include "commonheaderfile.h"
-	MyBytes.Word=123445677;
+    //in other 'C' files
+    #include "commonheaderfile.h"
+    MyBytes.Word=123445677;
 */
 
 
@@ -177,7 +178,7 @@ const unsigned long			bit0_MIN = 2330;
 const unsigned long			bit0_MAX = 2730;
 const unsigned long			glitch_Length = 300;                  // Anything below this value is a glitch and will be ignored.
 
-															  //--- Interrupt variables
+                                                              //--- Interrupt variables
 unsigned long				fall_Time = 0;                        // Placeholder for microsecond time when last falling edge occured.
 unsigned long				rise_Time = 0;                        // Placeholder for microsecond time when last rising edge occured.
 byte						bit_Count = 0;                        // Bit counter for received bits.
@@ -190,6 +191,7 @@ volatile boolean			hasAutoStarted = false;			// over
 FILE						serial_stdout;					// needed for printf 
 SerialCommand				sCmd;							// The demo SerialCommand object
 
+NC7427_PROTOCOL				tmpProt;
 NC7427_PROTOCOL				sensors[10];					// define 0..9 Sensors 
 
 unsigned long				wait_time = 0;					// wait for autostart
@@ -199,247 +201,256 @@ unsigned long				wait_time = 0;					// wait for autostart
 //------------------------------------------------------------------
 void setup()
 {
-	pinMode(LED_BUILTIN, OUTPUT);      // Configure the onboard LED for output
-	pinMode(LED_EXTERN, OUTPUT);
-	digitalWrite(LED_BUILTIN, LOW);    // default to LED off
-	digitalWrite(LED_EXTERN, LOW);    // default to LED off
+    pinMode(LED_BUILTIN, OUTPUT);      // Configure the onboard LED for output
+    pinMode(LED_EXTERN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);    // default to LED off
+    digitalWrite(LED_EXTERN, LOW);    // default to LED off
 
-	//--- set up stdout
-	fdev_setup_stream(&serial_stdout, serial_putchar, NULL, _FDEV_SETUP_WRITE);
-	stdout = &serial_stdout;
+    //--- set up stdout
+    fdev_setup_stream(&serial_stdout, serial_putchar, NULL, _FDEV_SETUP_WRITE);
+    stdout = &serial_stdout;
 
-	Serial.begin(57600);
+    Serial.begin(57600);
 
-	// Setup callbacks for SerialCommand commands
-	sCmd.addCommand("ON", LED_on);          // Turns LED on
-	sCmd.addCommand("OFF", LED_off);         // Turns LED off
-	sCmd.addCommand("BLINK", Blink);         // Turns LED off
-	sCmd.addCommand("HELLO", sayHello);        // Echos the string argument back
-	sCmd.addCommand("P", processCommand);		// Converts two arguments to integers and echos them back
-	sCmd.addCommand("START", process433_start);		// runs into processmode 
-	sCmd.addCommand("STOP", process433_stop);		// stop int-reading
-	sCmd.setDefaultHandler(unrecognized);      // Handler for command that isn't matched  (says "What?")
+    // Setup callbacks for SerialCommand commands
+    sCmd.addCommand("ON", LED_on);          // Turns LED on
+    sCmd.addCommand("OFF", LED_off);         // Turns LED off
+    sCmd.addCommand("BLINK", Blink);         // Turns LED off
+    sCmd.addCommand("HELLO", sayHello);        // Echos the string argument back
+    sCmd.addCommand("P", processCommand);		// Converts two arguments to integers and echos them back
+    sCmd.addCommand("START", process433_start);		// runs into processmode 
+    sCmd.addCommand("STOP", process433_stop);		// stop int-reading
+    sCmd.setDefaultHandler(unrecognized);      // Handler for command that isn't matched  (says "What?")
 
-	printf("\n*** Ready for processing serial commands... \n");
-	printf("*******************************************\n");
-	printf("Possible commands: \n");
-	printf("\t ON \t- LED ON \n");
-	printf("\t OFF \t- LED off \n");
-	printf("\t BLINK \t- blinks LED \n");
-	printf("\t HELLO \t- welcome message \n");
-	printf("\t P \t- sample with arguments \n");
-	printf("\t START \t- start ISR-processing  \n");
-	printf("\t STOP \t- stops ISR processing \n");
-	printf("*******************************************\n");
-	printf("**Don't forget to initiate START-command **\n");
-	printf("** autostart enabled after 10 seconds    **\n");
-	printf("*******************************************\n\n");
+    printf("\n*** Ready for processing serial commands... \n");
+    printf("*******************************************\n");
+    printf("Possible commands: \n");
+    printf("\t ON \t- LED ON \n");
+    printf("\t OFF \t- LED off \n");
+    printf("\t BLINK \t- blinks LED \n");
+    printf("\t HELLO \t- welcome message \n");
+    printf("\t P \t- sample with arguments \n");
+    printf("\t START \t- start ISR-processing  \n");
+    printf("\t STOP \t- stops ISR processing \n");
+    printf("*******************************************\n");
+    printf("**Don't forget to initiate START-command **\n");
+    printf("** autostart enabled after 10 seconds    **\n");
+    printf("*******************************************\n\n");
 
-	wait_time = millis();
+    wait_time = millis();
 }
 //------------------------------------------------------------------
 void loop()
 {
-	if ((millis() - wait_time > 10000) && (!hasAutoStarted))
-	{
-		//--- autostart reading 
-		printf("Autostarting...\n");
-		process433_start();
-		hasAutoStarted = true;
-		printf("Autostarted!\n");
-	}
+    if ((millis() - wait_time > 10000) && (!hasAutoStarted))
+    {
+        //--- autostart reading 
+        printf("Autostarting...\n");
+        process433_start();
+        hasAutoStarted = true;
+        printf("Autostarted!\n");
+    }
 
-	sCmd.readSerial();     //--- process serial commands
+    sCmd.readSerial();     //--- process serial commands
 
-	if (isInReadMode)
-		loop433();			//--- get readings if available	
+    if (isInReadMode)
+        loop433();			//--- get readings if available	
 }
 //--------------------------------------------------------------------------------
 void loop433()
 {
-	unsigned long myData0 = 0;
-	unsigned long myData1 = 0;
-	unsigned long tmp = 0;
-	uint8_t buf[4] = { 0,0,0,0 };
+    unsigned long myData0 = 0;
+    unsigned long myData1 = 0;
+    unsigned long tmp = 0;
+    uint8_t buf[4] = { 0,0,0,0 };
 
 
-	//if ((bitRead(isrFlags, F_GOOD_DATA) == 1) && (bitRead(isrFlags, F_HAVE_DATA) == 1) )
-	if (bitRead(isrFlags, F_GOOD_DATA) == 1)
-	{
-		//--- we have at least 2 consecutive matching reads
-		myData0 = read_Buffer[0]; // Read the data spread over 2x 32 variables
-		myData1 = read_Buffer[1];
+    //if ((bitRead(isrFlags, F_GOOD_DATA) == 1) && (bitRead(isrFlags, F_HAVE_DATA) == 1) )
+    if (bitRead(isrFlags, F_GOOD_DATA) == 1)
+    {
+        //--- we have at least 2 consecutive matching reads
+        myData0 = read_Buffer[0]; // Read the data spread over 2x 32 variables
+        myData1 = read_Buffer[1];
 
-		tmp = myData1 >> 2;
-		buf[3] = tmp >> 24;
-		buf[2] = tmp >> 16;
-		buf[1] = tmp >> 8;
-		buf[0] = tmp;
+        //tmp = myData1 >> 2;
+        tmp = myData0;
+        buf[3] = tmp >> 24;
+        buf[2] = tmp >> 16;
+        buf[1] = tmp >> 8;
+        buf[0] = tmp;
 
-		printf("Data: ");
-		printBits(sizeof(tmp), &tmp);
+        printf("Data[B]: "); printBits(sizeof(tmp), &tmp);
+        printf("Data[buf_x]: %X - %X -%X - %X \n", buf[3], buf[2], buf[1], buf[0]);
+        printf("Data[buf]:"); printBits(sizeof(buf), &buf); printf("\n");
 
-		//printf("Data: %x - %x - %x - %x\t", buf[0], buf[1],buf[2],buf[3]);
-		//printf("DataA: %lu  DataB:  %lu \t", myData0, data);
-		//printf("Data_1: %lu HEX: 0x%lu \t", myData1, myData1);
+        //printf("Data: %x - %x - %x - %x\t", buf[0], buf[1],buf[2],buf[3]);
+        //printf("DataA: %lu  DataB:  %lu \t", myData0, data);
+        //printf("Data_1: %lu HEX: 0x%lu \t", myData1, myData1);
 
-		bitClear(isrFlags, F_HAVE_DATA); // Flag we have read the data
+        bitClear(isrFlags, F_HAVE_DATA); // Flag we have read the data
 
-		dec2binLong(myData0, 10);
-		dec2binLong(myData1, 32);
+        dec2binLong(myData0, 10);
+        dec2binLong(myData1, 32);
 
-		Serial.print(" - Battery=");
-		byte H = (myData1 >> 30) & 0x3;   // Get Battery
-		Serial.print(H);
+        Serial.print(" - Battery=");
+        byte H = (myData1 >> 30) & 0x3;   // Get Battery
+        Serial.print(H);
+        tmpProt.bat = H; 
 
-		Serial.print(" Channel=");
-		H = (myData1 >> 28) & 0x3;        // Get Channel  
-		H += 1;                           // Channel 1..3 not 0..2   
-		Serial.print(H);
+        Serial.print(" Channel=");
+        H = (myData1 >> 28) & 0x3;        // Get Channel  
+        H += 1;                           // Channel 1..3 not 0..2   
+        Serial.print(H);
+        tmpProt.chan = H; 
 
-		byte ML = (myData1 >> 16) & 0xF0; // Get MMMM
-		H = (myData1 >> 24) & 0xF;        // Get LLLL
-		ML = ML | H;                      // OR MMMM & LLLL nibbles together
-		H = (myData1 >> 16) & 0xF;        // Get HHHH
+        byte ML = (myData1 >> 16) & 0xF0; // Get MMMM
+        H = (myData1 >> 24) & 0xF;        // Get LLLL
+        ML = ML | H;                      // OR MMMM & LLLL nibbles together
+        H = (myData1 >> 16) & 0xF;        // Get HHHH
+        
 
-		int tempFah = ((H << 8) | ML) - 900;  // Combine HHHH MMMMLLLL, Remove Constant offset    
-		float tempF = tempFah / 10.0;
-		float tempC = ((tempFah / 10.0) - 32) * 5 / 9;
+        int tempFah = ((H << 8) | ML) - 900;  // Combine HHHH MMMMLLLL, Remove Constant offset    
+        float tempF = tempFah / 10.0;
+        float tempC = ((tempFah / 10.0) - 32) * 5 / 9;
+        tmpProt.tempF = tempF;
+        tmpProt.tempC = tempC;
 
-		H = (myData1 >> 4) & 0xF0;    // Get HHHH
-		ML = (myData1 >> 12) & 0x0F;    // Get LLLL
-		ML = ML | H;                    // OR HHHH & LLLL nibbles together
 
-		Serial.print(" Temperature=");
-		Serial.print("[F]: "); Serial.print(tempF, 1); Serial.print("   ");
-		Serial.print("[C]: "); Serial.print(tempC, 1); Serial.print("    ");
-		Serial.print("Humidity=");
-		Serial.print(ML);
-		Serial.println("%");
+        H = (myData1 >> 4) & 0xF0;    // Get HHHH
+        ML = (myData1 >> 12) & 0x0F;    // Get LLLL
+        ML = ML | H;                    // OR HHHH & LLLL nibbles together
+        tmpProt.hum = ML; 
 
-		//--- prepare for next reading
-		bitClear(isrFlags, F_GOOD_DATA); //-- flag we have read the data
+        Serial.print(" Temperature=");
+        Serial.print("[F]: "); Serial.print(tempF, 1); Serial.print("   ");
+        Serial.print("[C]: "); Serial.print(tempC, 1); Serial.print("    ");
+        Serial.print("Humidity=");
+        Serial.print(ML);
+        Serial.println("%");
 
-	}
-	//delay(100);
+        //--- prepare for next reading
+        bitClear(isrFlags, F_GOOD_DATA); //-- flag we have read the data
+
+    }
+    //delay(100);
 }
 // ------------------------------------------------------------------
 void process433_start()
 {
-	Serial.print(F("ISR Pin 2 Configured For Input."));
-	attachInterrupt(0, PinChangeISR0, CHANGE);
-	isInReadMode = true;
-	Serial.println(F("Pin 2 ISR Function Attached. Here we go..."));
+    Serial.print(F("ISR Pin 2 Configured For Input."));
+    attachInterrupt(0, PinChangeISR0, CHANGE);
+    isInReadMode = true;
+    Serial.println(F("Pin 2 ISR Function Attached. Here we go..."));
 }
 // ------------------------------------------------------------------
 void process433_stop()
 {
-	detachInterrupt(0);
-	isInReadMode = false;
-	Serial.println(F("Pin 2 ISR INT0 Function detached."));
+    detachInterrupt(0);
+    isInReadMode = false;
+    Serial.println(F("Pin 2 ISR INT0 Function detached."));
 }
 
 // ------------------------------------------------------------------
 void LED_on()
 {
-	Serial.println("LED on");
-	digitalWrite(LED_BUILTIN, HIGH);
+    Serial.println("LED on");
+    digitalWrite(LED_BUILTIN, HIGH);
 }
 //------------------------------------------------------------------
 void LED_off()
 {
-	Serial.println("LED off");
-	digitalWrite(LED_BUILTIN, LOW);
+    Serial.println("LED off");
+    digitalWrite(LED_BUILTIN, LOW);
 }
 //------------------------------------------------------------------
 void Blink()
 {
-	Serial.println("Blinking...");
-	for (byte i = 0; i < 10; i++)
-	{
-		digitalWrite(LED_BUILTIN, HIGH);
-		delay(100);
-		digitalWrite(LED_BUILTIN, LOW);
-		delay(200);
-	}
-	Serial.println("Blink done.");
+    Serial.println("Blinking...");
+    for (byte i = 0; i < 10; i++)
+    {
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(100);
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(200);
+    }
+    Serial.println("Blink done.");
 }
 
 //------------------------------------------------------------------
 void sayHello()
 {
-	char *arg;
-	arg = sCmd.next();    // Get the next argument from the SerialCommand object buffer
-	if (arg != NULL)
-	{
-		// As long as it existed, take it
-		Serial.print("Hello ");
-		Serial.println(arg);
-	}
-	else
-	{
-		Serial.println("Hello, whoever you are");
-	}
+    char *arg;
+    arg = sCmd.next();    // Get the next argument from the SerialCommand object buffer
+    if (arg != NULL)
+    {
+        // As long as it existed, take it
+        Serial.print("Hello ");
+        Serial.println(arg);
+    }
+    else
+    {
+        Serial.println("Hello, whoever you are");
+    }
 }
 //------------------------------------------------------------------
 void processCommand()
 {
-	int aNumber;
-	char *arg;
+    int aNumber;
+    char *arg;
 
-	Serial.println("We're in processCommand");
-	arg = sCmd.next();
-	if (arg != NULL)
-	{
-		aNumber = atoi(arg);    // Converts a char string to an integer
-		Serial.print("First argument was: ");
-		Serial.println(aNumber);
-	}
-	else
-	{
-		Serial.println("No arguments");
-	}
+    Serial.println("We're in processCommand");
+    arg = sCmd.next();
+    if (arg != NULL)
+    {
+        aNumber = atoi(arg);    // Converts a char string to an integer
+        Serial.print("First argument was: ");
+        Serial.println(aNumber);
+    }
+    else
+    {
+        Serial.println("No arguments");
+    }
 
-	arg = sCmd.next();
-	if (arg != NULL)
-	{
-		aNumber = atol(arg);
-		Serial.print("Second argument was: ");
-		Serial.println(aNumber);
-	}
-	else
-	{
-		Serial.println("No second argument");
-	}
+    arg = sCmd.next();
+    if (arg != NULL)
+    {
+        aNumber = atol(arg);
+        Serial.print("Second argument was: ");
+        Serial.println(aNumber);
+    }
+    else
+    {
+        Serial.println("No second argument");
+    }
 }
 //------------------------------------------------------------------
 // This gets set as the default handler, and gets called when no other serial command matches.
 void unrecognized(const char *command)
 {
-	Serial.println("What?");
+    Serial.println("What?");
 }
 //-------------------------------------------------------------------------------
 //--- function that printf and related will use to print
 int serial_putchar(char c, FILE* f)
 {
-	if (c == '\n') serial_putchar('\r', f);
-	return Serial.write(c) == 1 ? 0 : 1;
+    if (c == '\n') serial_putchar('\r', f);
+    return Serial.write(c) == 1 ? 0 : 1;
 }
 //--------------------------------------------------------------------------------------
 void dec2binLong(unsigned long myNum, byte NumberOfBits)
 {
-	if (NumberOfBits <= 32)
-	{
-		myNum = myNum << (32 - NumberOfBits);
-		for (int i = 0; i < NumberOfBits; i++)
-		{
-			if (bitRead(myNum, 31) == 1)
-				Serial.print("1");
-			else
-				Serial.print("0");
-			myNum = myNum << 1;
-		}
-	}
+    if (NumberOfBits <= 32)
+    {
+        myNum = myNum << (32 - NumberOfBits);
+        for (int i = 0; i < NumberOfBits; i++)
+        {
+            if (bitRead(myNum, 31) == 1)
+                Serial.print("1");
+            else
+                Serial.print("0");
+            myNum = myNum << 1;
+        }
+    }
 }
 //--------------------------------------------------------------------------------------
 /* Usage-Example "printBits":
@@ -452,117 +463,131 @@ void dec2binLong(unsigned long myNum, byte NumberOfBits)
 */
 void printBits(size_t const size, void const * const ptr)
 {
-	unsigned char *b = (unsigned char*)ptr;
-	unsigned char byte;
-	int i, j;
+    unsigned char *b = (unsigned char*)ptr;
+    unsigned char byte;
+    int i, j;
 
-	for (i = size - 1; i >= 0; i--)
-	{
-		for (j = 7; j >= 0; j--)
-		{
-			byte = (b[i] >> j) & 1;
-			printf("%u", byte);
-		}
-	}
-	puts("");
+    for (i = size - 1; i >= 0; i--)
+    {
+        for (j = 7; j >= 0; j--)
+        {
+            byte = (b[i] >> j) & 1;
+            printf("%u", byte);
+        }
+    }
+    puts("");
 }
-//--------------------------------------------------------------------------------------
+/* --------------------------------------------------------------------------------------
+    Flags:
+
+        7   6   5   4   3  2   1   0
+        |   |   |   |   |  |   |   |______  F_HAVE_DATA
+        |   |   |   |   |  |   |___________ F_GOOD_DATA
+        |   |   |   |   |  |_______________ F_CARRY_BIT
+        |   |   |   |   |__________________ unused
+        |   |   |   |______________________ unused
+        |   |   |__________________________ unused
+        |   |______________________________ unused
+        |__________________________________ F_STATE
+ --------------------------------------------------------------------------------------*/
 void PinChangeISR0()
 {
-	// Pin 2 (Interrupt 0) service routine
-	unsigned long Time = micros();                          // Get current time
-	if (digitalRead(2) == LOW)
-	{
-		// Falling edge
-		if (Time > (rise_Time + glitch_Length))
-		{
-			//--- no glitch
-			Time = micros() - fall_Time;                        // Subtract last falling edge to get pulse time.
+    // Pin 2 (Interrupt 0) service routine
+    unsigned long Time = micros();    // Get current time
 
-			if (bitRead(build_Buffer[1], 31) == 1)
-				bitSet(isrFlags, F_CARRY_BIT);
-			else
-				bitClear(isrFlags, F_CARRY_BIT);
+    //--- commencing input? 
+    if (digitalRead(2) == LOW)
+    {
+        //--- falling edge
+        if (Time > (rise_Time + glitch_Length))
+        {
+            //--- no glitch
+            Time = micros() - fall_Time;                        // Subtract last falling edge to get pulse time.
 
-			if (bitRead(isrFlags, F_STATE) == 1)
-			{
-				//-- data!
-				if ((Time > bit0_MIN) && (Time < bit0_MAX))
-				{
-					//--- 0 bit
-					build_Buffer[1] = build_Buffer[1] << 1;
-					build_Buffer[0] = build_Buffer[0] << 1;
-					if (bitRead(isrFlags, F_CARRY_BIT) == 1)
-						bitSet(build_Buffer[0], 0);
-					bit_Count++;
-				}
-				else if ((Time > bit1_MIN) && (Time < bit1_MAX))
-				{
-					//--- 1 bit
-					build_Buffer[1] = build_Buffer[1] << 1;
-					bitSet(build_Buffer[1], 0);
-					build_Buffer[0] = build_Buffer[0] << 1;
-					if (bitRead(isrFlags, F_CARRY_BIT) == 1)
-						bitSet(build_Buffer[0], 0);
-					bit_Count++;
-				}
-				else
-				{
-					// Not a 0 or 1 bit so restart data build and check if it's a sync?
-					bit_Count = 0;
-					build_Buffer[0] = 0;
-					build_Buffer[1] = 0;
-					bitClear(isrFlags, F_GOOD_DATA);                // Signal data reads dont' match
-					bitClear(isrFlags, F_STATE);                    // Set looking for Sync mode
-					if ((Time > sync_MIN) && (Time < sync_MAX)) {
-						// Sync length okay
-						bitSet(isrFlags, F_STATE);                    // Set data mode
-					}
-				}
-				if (bit_Count >= allDataBits)
-				{
-					// All bits arrived
-					bitClear(isrFlags, F_GOOD_DATA);                // Assume data reads don't match
-					if (build_Buffer[0] == read_Buffer[0])
-					{
-						if (build_Buffer[1] == read_Buffer[1])
-							bitSet(isrFlags, F_GOOD_DATA);              // Set data reads match
-					}
-					read_Buffer[0] = build_Buffer[0];
-					read_Buffer[1] = build_Buffer[1];
-					bitSet(isrFlags, F_HAVE_DATA);                  // Set data available
-					bitClear(isrFlags, F_STATE);                    // Set looking for Sync mode
-					digitalWrite(LED_EXTERN, HIGH); // Used for debugging
-					build_Buffer[0] = 0;
-					build_Buffer[1] = 0;
-					bit_Count = 0;
-				}
-			}
-			else
-			{
-				//--- looking for sync
-				if ((Time > sync_MIN) && (Time < sync_MAX))
-				{
-					// Sync length okay
-					build_Buffer[0] = 0;
-					build_Buffer[1] = 0;
-					bit_Count = 0;
-					bitSet(isrFlags, F_STATE);                      // Set data mode
-					digitalWrite(LED_EXTERN, LOW); // Used for debugging
-				}
-			}
-			fall_Time = micros();                               // Store fall time
-		}
-	}
-	else
-	{
-		//--- Rising edge
-		if (Time > (fall_Time + glitch_Length))
-		{
-			//--- Not a glitch
-			rise_Time = Time;                                   // Store rise time
-		}
-	}
+            if (bitRead(build_Buffer[1], 31) == 1)
+                bitSet(isrFlags, F_CARRY_BIT);
+            else
+                bitClear(isrFlags, F_CARRY_BIT);
+
+            if (bitRead(isrFlags, F_STATE) == 1)
+            {
+                //--- data!
+                if ((Time > bit0_MIN) && (Time < bit0_MAX))
+                {
+                    //--- 0 bit
+                    build_Buffer[1] = build_Buffer[1] << 1;
+                    build_Buffer[0] = build_Buffer[0] << 1;
+                    if (bitRead(isrFlags, F_CARRY_BIT) == 1)
+                        bitSet(build_Buffer[0], 0);
+                    bit_Count++;
+                }
+                else if ((Time > bit1_MIN) && (Time < bit1_MAX))
+                {
+                    //--- 1 bit
+                    build_Buffer[1] = build_Buffer[1] << 1;
+                    bitSet(build_Buffer[1], 0);
+                    build_Buffer[0] = build_Buffer[0] << 1;
+                    if (bitRead(isrFlags, F_CARRY_BIT) == 1)
+                        bitSet(build_Buffer[0], 0);
+                    bit_Count++;
+                }
+                else
+                {
+                    // Not a 0 or 1 bit so restart data build and check if it's a sync?
+                    bit_Count = 0;
+                    build_Buffer[0] = 0;
+                    build_Buffer[1] = 0;
+                    bitClear(isrFlags, F_GOOD_DATA);                // Signal data reads dont' match
+                    bitClear(isrFlags, F_STATE);                    // Set looking for Sync mode
+                    if ((Time > sync_MIN) && (Time < sync_MAX)) {
+                        // Sync length okay
+                        bitSet(isrFlags, F_STATE);                    // Set data mode
+                    }
+                }
+                if (bit_Count >= allDataBits)
+                {
+                    //--- all bits arrived
+                    bitClear(isrFlags, F_GOOD_DATA);                // Assume data reads don't match
+                    if (build_Buffer[0] == read_Buffer[0])
+                    {
+                        if (build_Buffer[1] == read_Buffer[1])
+                            bitSet(isrFlags, F_GOOD_DATA);              // Set data reads match
+                    }
+                    read_Buffer[0] = build_Buffer[0];
+                    read_Buffer[1] = build_Buffer[1];
+                    bitSet(isrFlags, F_HAVE_DATA);                  // Set data available
+                    bitClear(isrFlags, F_STATE);                    // Set looking for Sync mode
+                    digitalWrite(LED_EXTERN, HIGH); // Used for debugging
+                    build_Buffer[0] = 0;
+                    build_Buffer[1] = 0;
+                    bit_Count = 0;
+                }
+            }
+            else
+            {
+                //--- looking for sync
+                if ((Time > sync_MIN) && (Time < sync_MAX))
+                {
+                    //--- sync length okay
+                    build_Buffer[0] = 0;
+                    build_Buffer[1] = 0;
+                    bit_Count = 0;
+                    bitSet(isrFlags, F_STATE);                      // Set data mode
+                    digitalWrite(LED_EXTERN, LOW); // Used for debugging
+                }
+            }
+            fall_Time = micros();                               // Store fall time
+        }
+    }
+    else
+    {
+        //--- rising edge
+        if (Time > (fall_Time + glitch_Length))
+        {
+            //--- not a glitch
+            rise_Time = Time;                                   // Store rise time
+        }
+    }
 }
 //-------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------
