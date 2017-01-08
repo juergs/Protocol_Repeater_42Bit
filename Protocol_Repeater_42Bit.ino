@@ -1,15 +1,20 @@
-/*  
+/*
 ***********************************************************************************************************************************
 OK-Version juergs, 30.12.2016
-*   Unknown 433Mhz weather sensor decoder.
-*  http://arduino.cc/forum/index.php/topic,142871.msg1106336.html#msg1106336
-*  Rising edge
+Dekodieren Temperatur Feuchte T/H sensor von PEARL NC7427(NC7415) 433MHz
+*   Unknown 433Mhz weather sensor decoder with 42 Bit protocol length
+*   (without two Start-Sync-Patterns with 8 ms duration and 13 times initial "wakeup" sequence).
+*   http://arduino.cc/forum/index.php/topic,142871.msg1106336.html#msg1106336
+	Protocol:
+	https://docs.google.com/document/d/121ZH3omAZsdhFi3GSB-YdnasMjIQSGIcaS7QW6KsACA/mobilebasic?pli=1
+*   Rising edge
 __           ___       ___    ___
   |         |  |      |  |   |  |
   |_________|  |______|  |___|  |_......
 
 |  Sync      |    1    |  0   |
 |  8320us    | 4500us  | 2530us
+|  8000uS    |
 
 00          BB CC LLLLMMMMHHHH LLLLHHHH ????????
 LD Rnd.Nmbr BT CH TemperatureF Humidity CRC?????
@@ -78,7 +83,7 @@ It has to be something with channel value, as you can see in these readings:
 001010010001 10 011011110011 00100011 10011000 - Battery=1 Channel=2 Temperature=11.4F Humidity=50% CH-3
 
 
-** two active devices 
+** two active devices
 2017-01-07 16:23:46 CUL_TCM97001 Unknown Code: 030311848080
 2017-01-07 16:24:00 CUL_TCM97001 Unknown Code: 06C5D1888240
 
@@ -100,50 +105,101 @@ It has to be something with channel value, as you can see in these readings:
 ***********************************************************************************************************************************
 */
 
+#include <EEPROM.h>
 #include "SerialCommand.h"
 #include <avr/pgmspace.h>   //enable use of flash memory
+
 //--------------------------------------------------------------------------
-// Defines
-#define allDataBits		42                                    // Number of data bits to expect
-#define LED_EXTERN		12	
+
+typedef struct
+{
+	//					lead;		//  2 bit default: 00 
+	byte			id;			//  8 bit 
+	byte			bat;		//  2 bit   [00 = low, 01 =2/3, 10 = best]
+	byte			chan;		//  2 bit	[00 = 1, 01= 2, 10 = 3]
+	unsigned int	temp;		// 12 bit	[3 digits in Fahrenheit with 900 Offset i.e. 78.3F, 1100.0101.0110 = 728 = 728 + 900 ]
+	byte	        hum;		//  8 bit   [swap nibbles: 1000.0010 = 40 = 0010.1000]
+	byte			checksum;   //  8 bit
+	byte			lacrosseID; // 
+} NC7427_PROTOCOL;
+
+
+/*
+Usage:
+Wenn nun zwei Variablen vom Typ Address definiert werden,
+	PROTOCOL Kunde;
+	ADDRESS  Lieferant = { "Fischer", "Peter", 2723499, 83342 };
+dann kann der gesamte Inhalt von Lieferant durch
+	Kunde = Lieferant;
+an Kunde zugewiesen werden.Der Aufruf mit Punkt-Operator
+	printf("%s %s\n", Kunde.szVorname, Kunde.szName);
+
+Union:
+
+	You could typedef the Union in a common header file:
+	typedef union
+	{
+	uint8_t Bytes[4];
+	uint32_t Word;
+	}BYTES_TO_WORD;
+
+	extern BYTES_TO_WORD MyBytes;
+
+	//In the 'C' File with the declairation in it
+
+	#include "commonheaderfile.h"
+	BYTES_TO_WORD MyBytes;
+
+	//in other 'C' files
+	#include "commonheaderfile.h"
+	MyBytes.Word=123445677;
+*/
+
+
+//--- Defines
+#define LACROSSE_BASIS_ID	110								//Basis where Devices start 
+#define allDataBits			42                                  // Number of data bits to expect
+#define LED_EXTERN			12	
 
 //--- isrFlags bit numbers
-#define F_HAVE_DATA		1                                     // 0=Nothing in read buffer, 1=Data in read buffer
-#define F_GOOD_DATA		2                                     // 0=Unverified data, 1=Verified (2 consecutive matching reads)
-#define F_CARRY_BIT		3                                     // Bit used to carry over bit shift from one long to the other
-#define F_STATE			7                                         // 0=Sync mode, 1=Data mode
-#define ulong			unsigned long
+#define F_HAVE_DATA			1                                     // 0=Nothing in read buffer, 1=Data in read buffer
+#define F_GOOD_DATA			2                                     // 0=Unverified data, 1=Verified (2 consecutive matching reads)
+#define F_CARRY_BIT			3                                     // Bit used to carry over bit shift from one long to the other
+#define F_STATE				7                                     // 0=Sync mode, 1=Data mode
+#define ulong				unsigned long
 
 //--- Constants
-const unsigned long		sync_MIN = 8120;                      // Minimum Sync time in micro seconds
-const unsigned long		sync_MAX = 8520;
-const unsigned long		bit1_MIN = 4300;
-const unsigned long		bit1_MAX = 4700;
-const unsigned long		bit0_MIN = 2330;
-const unsigned long		bit0_MAX = 2730;
-const unsigned long		glitch_Length = 300;                  // Anything below this value is a glitch and will be ignored.
+const unsigned long			sync_MIN = 8120;                      // Minimum Sync time in micro seconds
+const unsigned long			sync_MAX = 8520;
+const unsigned long			bit1_MIN = 4300;
+const unsigned long			bit1_MAX = 4700;
+const unsigned long			bit0_MIN = 2330;
+const unsigned long			bit0_MAX = 2730;
+const unsigned long			glitch_Length = 300;                  // Anything below this value is a glitch and will be ignored.
 
 															  //--- Interrupt variables
-unsigned long			fall_Time = 0;                              // Placeholder for microsecond time when last falling edge occured.
-unsigned long			rise_Time = 0;                              // Placeholder for microsecond time when last rising edge occured.
-byte					bit_Count = 0;                                       // Bit counter for received bits.
-unsigned long			build_Buffer[] = { 0, 0 };                    // Placeholder last data packet being received.
-volatile unsigned long	read_Buffer[]  = { 0, 0 };            // Placeholder last full data packet read.
-volatile byte			isrFlags = 0;                               // Various flag bits
-volatile boolean		isInReadMode = false; 
-volatile boolean		hasAutoStarted = false;			// over
+unsigned long				fall_Time = 0;                        // Placeholder for microsecond time when last falling edge occured.
+unsigned long				rise_Time = 0;                        // Placeholder for microsecond time when last rising edge occured.
+byte						bit_Count = 0;                        // Bit counter for received bits.
+unsigned long				build_Buffer[] = { 0, 0 };            // Placeholder last data packet being received.
+volatile unsigned long		read_Buffer[]  = { 0, 0 };            // Placeholder last full data packet read.
+volatile byte				isrFlags = 0;                         // Various flag bits
+volatile boolean			isInReadMode = false;
+volatile boolean			hasAutoStarted = false;			// over
 
-FILE					serial_stdout;					// needed for printf 
-SerialCommand			sCmd;							// The demo SerialCommand object
+FILE						serial_stdout;					// needed for printf 
+SerialCommand				sCmd;							// The demo SerialCommand object
 
-unsigned long			wait_time = 0;					// wait for autostart
+NC7427_PROTOCOL				sensors[10];					// define 0..9 Sensors 
+
+unsigned long				wait_time = 0;					// wait for autostart
 
 //------------------------------------------------------------------
-
+// startup
 //------------------------------------------------------------------
-void setup() 
+void setup()
 {
-	pinMode(LED_BUILTIN , OUTPUT);      // Configure the onboard LED for output
+	pinMode(LED_BUILTIN, OUTPUT);      // Configure the onboard LED for output
 	pinMode(LED_EXTERN, OUTPUT);
 	digitalWrite(LED_BUILTIN, LOW);    // default to LED off
 	digitalWrite(LED_EXTERN, LOW);    // default to LED off
@@ -165,7 +221,7 @@ void setup()
 	sCmd.setDefaultHandler(unrecognized);      // Handler for command that isn't matched  (says "What?")
 
 	printf("\n*** Ready for processing serial commands... \n");
-	printf("*******************************************\n"); 
+	printf("*******************************************\n");
 	printf("Possible commands: \n");
 	printf("\t ON \t- LED ON \n");
 	printf("\t OFF \t- LED off \n");
@@ -179,24 +235,24 @@ void setup()
 	printf("** autostart enabled after 10 seconds    **\n");
 	printf("*******************************************\n\n");
 
-	wait_time = millis(); 
+	wait_time = millis();
 }
 //------------------------------------------------------------------
 void loop()
 {
-  if ( (millis() - wait_time > 10000) && (!hasAutoStarted)) 
-  { 
+	if ((millis() - wait_time > 10000) && (!hasAutoStarted))
+	{
 		//--- autostart reading 
 		printf("Autostarting...\n");
-		process433_start(); 
-		hasAutoStarted = true; 
+		process433_start();
+		hasAutoStarted = true;
 		printf("Autostarted!\n");
-  }
+	}
 
-  sCmd.readSerial();     // We don't do much, just process serial commands
+	sCmd.readSerial();     //--- process serial commands
 
-  if (isInReadMode) 
-	loop433();			// get readings if necessary	
+	if (isInReadMode)
+		loop433();			//--- get readings if available	
 }
 //--------------------------------------------------------------------------------
 void loop433()
@@ -208,14 +264,13 @@ void loop433()
 
 
 	//if ((bitRead(isrFlags, F_GOOD_DATA) == 1) && (bitRead(isrFlags, F_HAVE_DATA) == 1) )
-	if (bitRead(isrFlags, F_GOOD_DATA) == 1 )
+	if (bitRead(isrFlags, F_GOOD_DATA) == 1)
 	{
-
-		// We have at least 2 consecutive matching reads
+		//--- we have at least 2 consecutive matching reads
 		myData0 = read_Buffer[0]; // Read the data spread over 2x 32 variables
 		myData1 = read_Buffer[1];
 
-		tmp = myData1 >> 2; 
+		tmp = myData1 >> 2;
 		buf[3] = tmp >> 24;
 		buf[2] = tmp >> 16;
 		buf[1] = tmp >> 8;
@@ -227,7 +282,7 @@ void loop433()
 		//printf("Data: %x - %x - %x - %x\t", buf[0], buf[1],buf[2],buf[3]);
 		//printf("DataA: %lu  DataB:  %lu \t", myData0, data);
 		//printf("Data_1: %lu HEX: 0x%lu \t", myData1, myData1);
-	
+
 		bitClear(isrFlags, F_HAVE_DATA); // Flag we have read the data
 
 		dec2binLong(myData0, 10);
@@ -273,7 +328,7 @@ void process433_start()
 {
 	Serial.print(F("ISR Pin 2 Configured For Input."));
 	attachInterrupt(0, PinChangeISR0, CHANGE);
-	isInReadMode = true; 
+	isInReadMode = true;
 	Serial.println(F("Pin 2 ISR Function Attached. Here we go..."));
 }
 // ------------------------------------------------------------------
@@ -300,7 +355,7 @@ void LED_off()
 void Blink()
 {
 	Serial.println("Blinking...");
-	for (byte i=0; i<10; i++)
+	for (byte i = 0; i < 10; i++)
 	{
 		digitalWrite(LED_BUILTIN, HIGH);
 		delay(100);
@@ -358,7 +413,7 @@ void processCommand()
 	}
 }
 //------------------------------------------------------------------
-// This gets set as the default handler, and gets called when no other command matches.
+// This gets set as the default handler, and gets called when no other serial command matches.
 void unrecognized(const char *command)
 {
 	Serial.println("What?");
@@ -387,7 +442,7 @@ void dec2binLong(unsigned long myNum, byte NumberOfBits)
 	}
 }
 //--------------------------------------------------------------------------------------
-/* Examples: 
+/* Usage-Example "printBits":
 *	int i = 23;
 *	uint ui = UINT_MAX;
 *	float f = 23.45f;
@@ -416,23 +471,23 @@ void PinChangeISR0()
 {
 	// Pin 2 (Interrupt 0) service routine
 	unsigned long Time = micros();                          // Get current time
-	if (digitalRead(2) == LOW) 
+	if (digitalRead(2) == LOW)
 	{
 		// Falling edge
-		if (Time > (rise_Time + glitch_Length)) 
+		if (Time > (rise_Time + glitch_Length))
 		{
 			//--- no glitch
 			Time = micros() - fall_Time;                        // Subtract last falling edge to get pulse time.
-			
+
 			if (bitRead(build_Buffer[1], 31) == 1)
 				bitSet(isrFlags, F_CARRY_BIT);
 			else
 				bitClear(isrFlags, F_CARRY_BIT);
 
-			if (bitRead(isrFlags, F_STATE) == 1) 
+			if (bitRead(isrFlags, F_STATE) == 1)
 			{
 				//-- data!
-				if ((Time > bit0_MIN) && (Time < bit0_MAX)) 
+				if ((Time > bit0_MIN) && (Time < bit0_MAX))
 				{
 					//--- 0 bit
 					build_Buffer[1] = build_Buffer[1] << 1;
@@ -441,7 +496,7 @@ void PinChangeISR0()
 						bitSet(build_Buffer[0], 0);
 					bit_Count++;
 				}
-				else if ((Time > bit1_MIN) && (Time < bit1_MAX)) 
+				else if ((Time > bit1_MIN) && (Time < bit1_MAX))
 				{
 					//--- 1 bit
 					build_Buffer[1] = build_Buffer[1] << 1;
@@ -464,11 +519,11 @@ void PinChangeISR0()
 						bitSet(isrFlags, F_STATE);                    // Set data mode
 					}
 				}
-				if (bit_Count >= allDataBits) 
+				if (bit_Count >= allDataBits)
 				{
 					// All bits arrived
 					bitClear(isrFlags, F_GOOD_DATA);                // Assume data reads don't match
-					if (build_Buffer[0] == read_Buffer[0]) 
+					if (build_Buffer[0] == read_Buffer[0])
 					{
 						if (build_Buffer[1] == read_Buffer[1])
 							bitSet(isrFlags, F_GOOD_DATA);              // Set data reads match
@@ -483,10 +538,10 @@ void PinChangeISR0()
 					bit_Count = 0;
 				}
 			}
-			else 
+			else
 			{
 				//--- looking for sync
-				if ((Time > sync_MIN) && (Time < sync_MAX)) 
+				if ((Time > sync_MIN) && (Time < sync_MAX))
 				{
 					// Sync length okay
 					build_Buffer[0] = 0;
@@ -502,7 +557,7 @@ void PinChangeISR0()
 	else
 	{
 		//--- Rising edge
-		if (Time > (fall_Time + glitch_Length)) 
+		if (Time > (fall_Time + glitch_Length))
 		{
 			//--- Not a glitch
 			rise_Time = Time;                                   // Store rise time
@@ -512,4 +567,5 @@ void PinChangeISR0()
 //-------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------
 //------------------------------------------------------------------
+// <eof>
 //------------------------------------------------------------------
